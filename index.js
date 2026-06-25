@@ -242,7 +242,7 @@ app.delete('/api/my-startup/:id', async (req, res) => {
 
 // ==========================================
 //  APPLICATIONS MANAGEMENT 
-// ==========================================
+
 
 app.post('/api/applications', async (req, res) => {
   try {
