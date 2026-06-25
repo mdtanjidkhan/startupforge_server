@@ -101,7 +101,7 @@ app.get('/api/opportunities', async (req, res) => {
   }
 });
 
-
+// opportunities
 app.patch('/api/opportunities/:id', async (req, res) => {
   try {
     const id = req.params.id;
