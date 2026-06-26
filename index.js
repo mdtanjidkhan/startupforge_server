@@ -755,7 +755,7 @@ app.patch('/api/admin/startups/approve', async (req, res) => {
     res.status(500).json({ success: false, message: "Internal server error" });
   }
 });
-// rejected korar jonno
+// rejected korar jonno api
 
 app.patch('/api/admin/startups/reject', async (req, res) => {
   try {
