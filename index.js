@@ -779,7 +779,7 @@ app.patch('/api/admin/startups/reject', async (req, res) => {
     res.status(500).json({ success: false, message: "Internal server error" });
   }
 });
-// payments 
+// payments transactions
 
 app.get('/api/admin/transactions', async (req, res) => {
   try {
