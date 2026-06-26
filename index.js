@@ -8,7 +8,7 @@ const PORT = process.env.PORT
 app.use(cors());
 app.use(express.json());
 const uri = process.env.MONGODB_URI;
-
+const stripe = require('stripe')(process.env.STRIPE_SECRET_KEY);
 
 app.get('/', (req, res) => {
   res.send('Hello World!')
@@ -30,19 +30,32 @@ async function run() {
      const startupsCollection = database.collection("startups");
      const applicationsCollection = database.collection("applications");
      const profilesCollection = database.collection("profiles");
+      const paymentsCollection = database.collection('payments');
 
-
+  // opportunities 
 app.post('/api/opportunities', async (req, res) => {
   try {
     const opportunityData = req.body;
-    
     if (!opportunityData.role_title || !opportunityData.required_skills || !opportunityData.work_type || !opportunityData.commitment_level || !opportunityData.deadline) {
       return res.status(400).json({ success: false, message: "Missing required fields" });
     }
 
+    const founderEmail = opportunityData.founder_email || "founder@example.com";
+    const hasPaid = await paymentsCollection.findOne({ userEmail: founderEmail, status: "completed" });
+    const isUserPremium = !!hasPaid; 
+    const totalExistingPosts = await opportunitiesCollection.countDocuments({ founder_email: founderEmail });
+    if (totalExistingPosts >= 3 && !isUserPremium) {
+      return res.status(403).json({ 
+        success: false, 
+        premiumRequired: true, 
+        message: "You have reached your limit of 3 free posts. Please upgrade to premium to post more!" 
+      });
+    }
+
     const newOpportunity = {
       ...opportunityData,
-      founder_email: opportunityData.founder_email || "founder@example.com", 
+      founder_email: founderEmail, 
+      isPremium: isUserPremium, 
       created_at: new Date()
     };
 
@@ -52,16 +65,81 @@ app.post('/api/opportunities', async (req, res) => {
       message: "Opportunity published successfully!", 
       insertedId: result.insertedId 
     });
+
   } catch (error) {
     console.error("Error inserting opportunity:", error);
     res.status(500).json({ success: false, message: "Internal Server Error" });
   }
 });
 
+app.post('/api/create-checkout-session', async (req, res) => {
+  try {
+    const { email } = req.body;
+    if (!email) {
+      return res.status(400).json({ success: false, message: "User email is required" });
+    }
+    const session = await stripe.checkout.sessions.create({
+      payment_method_types: ['card'],
+      line_items: [
+        {
+          price_data: {
+            currency: 'usd',
+            product_data: {
+              name: 'StartupForge Pro Membership',
+              description: 'Unlock unlimited opportunity posts and premium features',
+            },
+            unit_amount: 1900, 
+          },
+          quantity: 1,
+        },
+      ],
+      mode: 'payment',
+      customer_email: email,
+      success_url: `http://localhost:3000/dashboard/overview/my-startup/add-opportunity?payment_success=true`,
+      cancel_url: `http://localhost:3000/dashboard/overview/my-startup/add-opportunity?payment_cancel=true`,
+    });
+
+    res.json({ url: session.url });
+  } catch (error) {
+    console.error("Stripe session creation error:", error);
+    res.status(500).json({ success: false, message: "Internal Server Error" });
+  }
+});
+
+// payment collcation
+app.post('/api/payments/success', async (req, res) => {
+  try {
+    const { email, amount, transactionId, status } = req.body;
+
+    if (!email || !transactionId) {
+      return res.status(400).json({ success: false, message: "Missing payment details" });
+    }
+
+    const paymentReceipt = {
+      userEmail: email,
+      amount: amount || 19,
+      transactionId: transactionId,
+      status: status || "completed",
+      paidAt: new Date()
+    };
+
+    const result = await paymentsCollection.insertOne(paymentReceipt);
+
+    res.status(201).json({ 
+      success: true, 
+      message: "Payment recorded successfully in database!",
+      paymentId: result.insertedId 
+    });
+  } catch (error) {
+    console.error("Error saving payment:", error);
+    res.status(500).json({ success: false, message: "Internal Server Error" });
+  }
+});
+
+// 
 app.get('/api/my-opportunities', async (req, res) => {
   try {
     const { email } = req.query; 
-    
     if (!email) {
       return res.status(400).json({ success: false, message: "Founder email query is required!" });
     }
@@ -285,7 +363,6 @@ app.post('/api/applications', async (req, res) => {
 
 // 
 
-
 app.get('/api/my-applications', async (req, res) => {
   try {
     const { email } = req.query;
@@ -294,7 +371,6 @@ app.get('/api/my-applications', async (req, res) => {
     }
     const pipeline = [
       { $match: { applicant_email: email } },
-
       {
         $lookup: {
           from: "opportunities",          
@@ -303,7 +379,6 @@ app.get('/api/my-applications', async (req, res) => {
           as: "opportunity_details"       
         }
       },
-
       {
         $unwind: {
           path: "$opportunity_details",
@@ -316,10 +391,10 @@ app.get('/api/my-applications', async (req, res) => {
           applicant_email: 1,
           portfolio_link: 1,
           motivation_message: 1,
-          status: 1,
+          status: { $ifNull: ["$status", "Pending"] }, 
           applied_at: 1,
-          role_title: { $ifNull: ["$opportunity_details.role_title", "$role_title"] },
-          startup_name: { $ifNull: ["$opportunity_details.startup_name", "$founder_email"] } 
+          role_title: { $ifNull: ["$opportunity_details.role_title", "$role_title", "N/A"] },
+          startup_name: { $ifNull: ["$opportunity_details.startup_name", "N/A"] } 
         }
       },
       { $sort: { applied_at: -1 } }
@@ -334,40 +409,7 @@ app.get('/api/my-applications', async (req, res) => {
   }
 });
 
-// 
 
-app.get('/api/collaborator-stats', async (req, res) => {
-  try {
-    const { email } = req.query;
-
-    if (!email) {
-      return res.status(400).json({ 
-        success: false, 
-        message: "Email query parameter is required!" 
-      });
-    }
-    const totalCount = await applicationsCollection.countDocuments({ applicant_email: email });
-    const pendingCount = await applicationsCollection.countDocuments({ applicant_email: email, status: "Pending" });
-    const rejectedCount = await applicationsCollection.countDocuments({ applicant_email: email, status: "Rejected" });
-    res.status(200).json({
-      success: true,
-      total: totalCount,
-      pending: pendingCount,
-      rejected: rejectedCount
-    });
-  } catch (error) {
-    console.error("Error fetching collaborator stats:", error);
-    res.status(500).json({ 
-      success: false, 
-      message: "Internal Server Error" 
-    });
-  }
-});
-
-// //  Application founder
-
-
-// 
 app.get('/api/founder-applications', async (req, res) => {
   try {
     const { email } = req.query; 
@@ -398,7 +440,7 @@ app.get('/api/founder-applications', async (req, res) => {
           applicant_email: 1,
           portfolio_link: 1,
           motivation_message: 1,
-          status: 1, // 'Pending', 'Accepted', 'Rejected'
+          status: { $ifNull: ["$status", "Pending"] },
           applied_at: 1,
           role_title: { $ifNull: ["$opportunity_details.role_title", "$role_title", "N/A"] }
         }
@@ -414,25 +456,26 @@ app.get('/api/founder-applications', async (req, res) => {
 });
 
 
-// ২.  (Accepted/Rejected) 
 app.patch('/api/applications/status/:id', async (req, res) => {
   try {
     const { id } = req.params;
     const { status } = req.body; 
+    
     if (!["Accepted", "Rejected"].includes(status)) {
       return res.status(400).json({ success: false, message: "Invalid status update" });
     }
-
     const filter = { _id: new ObjectId(id) };
     const updateDoc = { $set: { status: status } };
+    
     const result = await applicationsCollection.updateOne(filter, updateDoc);
+    
     if (result.matchedCount > 0) {
       res.status(200).json({ 
         success: true, 
         message: `Application ${status.toLowerCase()} successfully!` 
       });
     } else {
-      res.status(404).json({ success: false, message: "Application not found." });
+      res.status(404).json({ success: false, message: "Application not found in database." });
     }
   } catch (error) {
     console.error("Update status error:", error);
@@ -489,6 +532,102 @@ app.put('/api/collaborator-profile', async (req, res) => {
   }
 });
 
+// admin jonno 
+
+app.get('/api/admin/analytics', async (req, res) => {
+  try {
+    const totalUsers = await database.collection('user').countDocuments();
+    const totalStartups = await startupsCollection.countDocuments();
+
+    const totalOpportunities = await opportunitiesCollection.countDocuments();
+    const revenueData = await paymentsCollection.aggregate([
+      { $match: { status: "completed" } },
+      { $group: { _id: null, total: { $sum: "$amount" } } }
+    ]).toArray();
+    const totalRevenue = revenueData.length > 0 ? revenueData[0].total : 0;
+
+    res.json({
+      success: true,
+      totalUsers,
+      totalStartups,
+      totalOpportunities,
+      totalRevenue
+    });
+
+  } catch (error) {
+    console.error("Admin analytics API error:", error);
+    res.status(500).json({ success: false, message: "Internal Server Error" });
+  }
+});
+// view users 
+
+app.get('/api/admin/users', async (req, res) => {
+  try {
+  
+    const users = await database.collection("user").find({}).toArray();
+    
+    const safeUsers = users.map(user => ({
+      id: user._id || user.id,
+      name: user.name,
+      email: user.email,
+      image: user.image,
+      role: user.role || "user",
+     
+      isBlocked: user.isBlocked ?? false 
+    }));
+
+    res.json({ success: true, users: safeUsers });
+  } catch (error) {
+    console.error("Error fetching users:", error);
+    res.status(500).json({ success: false, message: "Failed to fetch users" });
+  }
+});
+
+app.patch('/api/admin/users/block', async (req, res) => {
+  try {
+    const { email } = req.body;
+
+    if (!email) {
+      return res.status(400).json({ success: false, message: "Email is required" });
+    }
+    const result = await database.collection("user").updateOne(
+      { email: email },
+      { $set: { isBlocked: true } }
+    );
+
+    if (result.modifiedCount > 0) {
+      res.json({ success: true, message: "User blocked successfully" });
+    } else {
+      res.status(404).json({ success: false, message: "User not found or already blocked" });
+    }
+  } catch (error) {
+    console.error("Error blocking user:", error);
+    res.status(500).json({ success: false, message: "Internal server error" });
+  }
+});
+
+app.patch('/api/admin/users/unblock', async (req, res) => {
+  try {
+    const { email } = req.body;
+
+    if (!email) {
+      return res.status(400).json({ success: false, message: "Email is required" });
+    }
+    const result = await database.collection("user").updateOne(
+      { email: email },
+      { $set: { isBlocked: false } }
+    );
+
+    if (result.modifiedCount > 0) {
+      res.json({ success: true, message: "User unblocked successfully" });
+    } else {
+      res.status(404).json({ success: false, message: "User not found or already active" });
+    }
+  } catch (error) {
+    console.error("Error unblocking user:", error);
+    res.status(500).json({ success: false, message: "Internal server error" });
+  }
+});
 
     await client.db("admin").command({ ping: 1 });
     console.log("Pinged your deployment. You successfully connected to MongoDB!");
