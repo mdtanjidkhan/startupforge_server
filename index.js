@@ -226,7 +226,7 @@ app.delete('/api/opportunities/:id', async (req, res) => {
   }
 });
 
-// STARTUP PROFILE ROlE
+// STARTUP PROFILE ROLE
 
 app.get('/api/my-startup', async (req, res) => {
   try {
@@ -272,7 +272,7 @@ app.post('/api/my-startup', async (req, res) => {
   }
 });
 
-//   (PATCH)
+//   (PATCH) NOW
 app.patch('/api/my-startup/:id', async (req, res) => {
   try {
     const { id } = req.params;
