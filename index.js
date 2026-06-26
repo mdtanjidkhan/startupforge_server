@@ -226,6 +226,58 @@ app.delete('/api/opportunities/:id', async (req, res) => {
   }
 });
 
+// founder overview 
+
+app.get('/api/founder/overview', async (req, res) => {
+  try {
+    const { email } = req.query;
+
+    if (!email) {
+      return res.status(400).json({ success: false, message: "Founder email is required" });
+    }
+    const [totalStartups, totalOpportunities, totalApplicants, recentApplications] = await Promise.all([
+      startupsCollection.countDocuments({ founder_email: email }),
+      opportunitiesCollection.countDocuments({ founder_email: email }),
+      applicationsCollection.countDocuments({ founder_email: email }),
+      applicationsCollection.find({ founder_email: email })
+        .sort({ applied_at: -1 }) 
+        .limit(5)                 
+        .toArray()
+    ]);
+    const formattedApplications = recentApplications.map(app => ({
+      id: app._id.toString(),
+      applicant_name: app.applicant_name,
+      applicant_email: app.applicant_email,
+      role_title: app.role_title,
+      status: app.status || "Pending",
+      portfolio_link: app.portfolio_link,
+      applied_at: app.applied_at ? new Date(app.applied_at).toLocaleDateString("en-US", {
+        month: 'short',
+        day: 'numeric',
+        year: 'numeric'
+      }) : "N/A"
+    }));
+
+    res.json({
+      success: true,
+      analytics: {
+        myStartups: totalStartups,
+        activeRoles: totalOpportunities,
+        totalApplicants: totalApplicants
+      },
+      recentApplications: formattedApplications
+    });
+
+  } catch (error) {
+    console.error("Error fetching founder overview:", error);
+    res.status(500).json({ success: false, message: "Internal server error" });
+  }
+});
+
+
+
+
+
 // STARTUP PROFILE ROLE
 
 app.get('/api/my-startup', async (req, res) => {
@@ -628,6 +680,246 @@ app.patch('/api/admin/users/unblock', async (req, res) => {
     res.status(500).json({ success: false, message: "Internal server error" });
   }
 });
+// block user 
+
+app.get("/api/dashboard/overview", async (req, res) => {
+  try {
+    const userEmail = req.user?.email; 
+
+    if (!userEmail) {
+      return res.status(401).json({ success: false, message: "Unauthorized access" });
+    }
+    const dbUser = await database.collection("user").findOne({ email: userEmail });
+    if (dbUser && dbUser.isBlocked === true) {
+      return res.status(403).json({ 
+        success: false, 
+        isBlocked: true, 
+        message: "Your account has been suspended by the administrator." 
+      });
+    }
+    res.json({ 
+      success: true, 
+      message: "Success",
+      data: {  } 
+    });
+
+  } catch (error) {
+    console.error("Server error:", error);
+    res.status(500).json({ success: false, message: "Internal server error" });
+  }
+});
+
+// 
+
+app.get('/api/admin/startups', async (req, res) => {
+  try {
+    const startups = await startupsCollection.find({}).toArray();
+    
+    const formattedStartups = startups.map(startup => ({
+      id: startup._id.toString(),
+      startup_name: startup.startup_name,
+      logo: startup.logo,
+      industry: startup.industry,
+      description: startup.description,
+      funding_stage: startup.funding_stage,
+      founder_email: startup.founder_email,
+      status: startup.status || "Pending"
+    }));
+
+    res.json({ success: true, startups: formattedStartups });
+  } catch (error) {
+    console.error("Error fetching startups:", error);
+    res.status(500).json({ success: false, message: "Failed to fetch startups" });
+  }
+});
+
+// approed korar jonno
+app.patch('/api/admin/startups/approve', async (req, res) => {
+  try {
+    const { id } = req.body;
+    if (!id) {
+      return res.status(400).json({ success: false, message: "Startup ID is required" });
+    }
+    const result = await startupsCollection.updateOne(
+      { _id: new ObjectId(id) },
+      { $set: { status: "Approved" } }
+    );
+
+    if (result.modifiedCount > 0) {
+      res.json({ success: true, message: "Startup approved successfully! " });
+    } else {
+      res.status(404).json({ success: false, message: "Startup not found or already approved" });
+    }
+  } catch (error) {
+    console.error("Error approving startup:", error);
+    res.status(500).json({ success: false, message: "Internal server error" });
+  }
+});
+// rejected korar jonno
+
+app.patch('/api/admin/startups/reject', async (req, res) => {
+  try {
+    const { id } = req.body;
+
+    if (!id) {
+      return res.status(400).json({ success: false, message: "Startup ID is required" });
+    }
+    const result = await startupsCollection.updateOne(
+      { _id: new ObjectId(id) },
+      { $set: { status: "Rejected" } }
+    );
+
+    if (result.modifiedCount > 0) {
+      res.json({ success: true, message: "Startup removed/rejected successfully! " });
+    } else {
+      res.status(404).json({ success: false, message: "Startup not found or already rejected" });
+    }
+  } catch (error) {
+    console.error("Error rejecting startup:", error);
+    res.status(500).json({ success: false, message: "Internal server error" });
+  }
+});
+// payments 
+
+app.get('/api/admin/transactions', async (req, res) => {
+  try {
+    const payments = await paymentsCollection.find({}).sort({ paidAt: -1 }).toArray();
+    
+    const formattedPayments = payments.map(payment => ({
+      id: payment._id.toString(),
+      userEmail: payment.userEmail,
+      amount: payment.amount,
+      transactionId: payment.transactionId,
+      status: payment.status || "pending",
+      paidAt: payment.paidAt ? new Date(payment.paidAt).toLocaleDateString("en-US", {
+        year: 'numeric',
+        month: 'short',
+        day: 'numeric',
+        hour: '2-digit',
+        minute: '2-digit'
+      }) : "N/A"
+    }));
+
+    res.json({ success: true, transactions: formattedPayments });
+  } catch (error) {
+    console.error("Error fetching payments:", error);
+    res.status(500).json({ success: false, message: "Failed to fetch transactions" });
+  }
+});
+// google signup
+
+
+app.patch('/api/user/update-role', async (req, res) => {
+  try {
+    const { email, role } = req.body;
+    if (!email || !role) {
+      return res.status(400).json({ success: false, message: "Email and Role are required" });
+    }
+
+    if (role !== "founder" && role !== "collaborator") {
+      return res.status(400).json({ success: false, message: "Invalid role selected" });
+    }
+    const result = await database.collection("user").updateOne(
+      { email: email }, 
+      { $set: { role: role } } 
+    );
+
+    if (result.modifiedCount > 0) {
+      res.json({ success: true, message: `Role updated to ${role} successfully! 🎉` });
+    } else {
+      res.status(404).json({ success: false, message: "User not found or role already set" });
+    }
+
+  } catch (error) {
+    console.error("Error updating user role:", error);
+    res.status(500).json({ success: false, message: "Internal server error" });
+  }
+});
+// home page 
+
+app.get('/api/home/featured-startups', async (req, res) => {
+  try {
+    const featuredStartups = await startupsCollection.aggregate([
+      { $match: { status: "Approved" } },
+      { $sort: { _id: -1 } },
+      { $limit: 3 },
+      {
+        $lookup: {
+          from: "user", 
+          localField: "founder_email",
+          foreignField: "email",
+          as: "founder_info"
+        }
+      },
+      {
+        $project: {
+          startup_name: 1,
+          logo: 1,
+          industry: 1,
+          founder_name: { $ifNull: [{ $arrayElemAt: ["$founder_info.name", 0] }, "Unknown Founder"] },
+          team_size_needed: { $literal: "2-4 Members" } 
+        }
+      }
+    ]).toArray();
+
+    res.json({ success: true, startups: featuredStartups });
+  } catch (error) {
+    console.error("Error fetching featured startups:", error);
+    res.status(500).json({ success: false, message: "Internal server error" });
+  }
+});
+
+
+app.get('/api/home/featured-opportunities', async (req, res) => {
+  try {
+    const featuredOpportunities = await opportunitiesCollection.aggregate([
+      { $sort: { _id: -1 } },
+      { $limit: 3 },
+      {
+        $lookup: {
+          from: "startups", 
+          localField: "founder_email",
+          foreignField: "founder_email",
+          as: "startup_info"
+        }
+      },
+      {
+        $project: {
+          role_title: 1,
+          required_skills: 1,
+          deadline: 1,
+          startup_name: { $ifNull: [{ $arrayElemAt: ["$startup_info.startup_name", 0] }, "Remote Startup"] }
+        }
+      }
+    ]).toArray();
+
+    res.json({ success: true, opportunities: featuredOpportunities });
+  } catch (error) {
+    console.error("Error fetching featured opportunities:", error);
+    res.status(500).json({ success: false, message: "Internal server error" });
+  }
+});
+
+app.get('/api/startups', async (req, res) => {
+  try {
+    const allStartups = await startupsCollection
+      .find({ status: "Approved" })
+      .sort({ _id: -1 }) 
+      .toArray();
+
+    res.json({
+      success: true,
+      startups: allStartups
+    });
+  } catch (error) {
+    console.error("Error fetching all startups:", error);
+    res.status(500).json({ success: false, message: "Internal server error" });
+  }
+});
+
+
+
+
 
     await client.db("admin").command({ ping: 1 });
     console.log("Pinged your deployment. You successfully connected to MongoDB!");
