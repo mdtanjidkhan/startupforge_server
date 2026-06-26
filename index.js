@@ -226,7 +226,7 @@ app.delete('/api/opportunities/:id', async (req, res) => {
   }
 });
 
-// STARTUP PROFILE ROUTEs
+// STARTUP PROFILE 
 
 app.get('/api/my-startup', async (req, res) => {
   try {
