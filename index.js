@@ -3,6 +3,7 @@ const app = express()
 const cors = require('cors')
 require('dotenv').config()
 const { MongoClient, ServerApiVersion, ObjectId } = require('mongodb');
+const { jwtVerify, createRemoteJWKSet } = require('jose-cjs');
 
 const PORT = process.env.PORT
 app.use(cors());
@@ -21,6 +22,38 @@ app.get('/', (req, res) => {
     deprecationErrors: true,
   }
 });
+
+
+
+const JWKS = createRemoteJWKSet(
+  new URL(`${process.env.CLIENT_URL}/api/auth/jwks`)
+);
+
+const verifyToken = async (req, res, next) => {
+  const authHeader = req?.headers?.authorization;
+  if (!authHeader || !authHeader.startsWith('Bearer ')) {
+    return res.status(401).send({ message: 'Unauthorized access: Missing token header' });
+  }
+
+  const token = authHeader.split(" ")[1];
+
+  if (!token) {
+    return res.status(401).send({ message: 'Unauthorized access: Token not found' });
+  }
+
+  try {
+    const { payload } = await jwtVerify(token, JWKS);
+    req.user = payload; 
+    console.log("Verified User Payload:", payload); // 
+    
+    next(); 
+  } catch (error) {
+    console.error("Token Verification Error:", error.message);
+    return res.status(403).send({ message: 'Forbidden access: Invalid or expired token' });
+  }
+};
+
+
 async function run() {
   try {
     
@@ -33,7 +66,7 @@ async function run() {
       const paymentsCollection = database.collection('payments');
 
   // opportunities 
-app.post('/api/opportunities', async (req, res) => {
+app.post('/api/opportunities', verifyToken, async (req, res) => {
   try {
     const opportunityData = req.body;
     if (!opportunityData.role_title || !opportunityData.required_skills || !opportunityData.work_type || !opportunityData.commitment_level || !opportunityData.deadline) {
@@ -72,7 +105,7 @@ app.post('/api/opportunities', async (req, res) => {
   }
 });
 
-app.post('/api/create-checkout-session', async (req, res) => {
+app.post('/api/create-checkout-session', verifyToken, async (req, res) => {
   try {
     const { email } = req.body;
     if (!email) {
@@ -135,6 +168,30 @@ app.post('/api/payments/success', async (req, res) => {
     res.status(500).json({ success: false, message: "Internal Server Error" });
   }
 });
+// paymet get
+app.get('/api/payments/check-premium', async (req, res) => {
+  try {
+    const email = req.query.email;
+    if (!email) {
+      return res.status(400).json({ success: false, message: "Email parameter is required" });
+    }
+    const payment = await paymentsCollection.findOne({ 
+      userEmail: email, 
+      status: "completed" 
+    });
+
+    if (payment) {
+      return res.json({ success: true, isPremium: true });
+    } else {
+      return res.json({ success: false, isPremium: false });
+    }
+  } catch (error) {
+    console.error("Error checking premium status:", error);
+    res.status(500).json({ success: false, message: "Internal Server Error" });
+  }
+});
+
+
 
 // 
 app.get('/api/my-opportunities', async (req, res) => {
@@ -150,6 +207,40 @@ app.get('/api/my-opportunities', async (req, res) => {
   } catch (error) {
     console.error("Error fetching my opportunities:", error);
     res.status(500).json({ success: false, message: "Error fetching data" });
+  }
+});
+
+// count cl
+
+app.get('/api/collaborator-stats', async (req, res) => {
+  try {
+    const email = req.query.email;
+    
+    if (!email) {
+      return res.status(400).json({ success: false, message: "Collaborator email is required" });
+    }
+    const totalCount = await applicationsCollection.countDocuments({ 
+     applicant_email: email });
+    const pendingCount = await applicationsCollection.countDocuments({ 
+      
+      applicant_email: email, 
+      status: "pending" 
+    });
+    const rejectedCount = await applicationsCollection.countDocuments({ 
+      
+      applicant_email: email, 
+      status: "rejected" 
+    });
+    res.json({
+      success: true,
+      total: totalCount,
+      pending: pendingCount,
+      rejected: rejectedCount
+    });
+
+  } catch (error) {
+    console.error("Error fetching collaborator stats:", error);
+    res.status(500).json({ success: false, message: "Internal Server Error" });
   }
 });
 
@@ -298,7 +389,7 @@ app.get('/api/my-startup', async (req, res) => {
 });
 
 
-app.post('/api/my-startup', async (req, res) => {
+app.post('/api/my-startup',verifyToken, async (req, res) => {
   try {
     const { startup_name, logo, industry, description, funding_stage, founder_email } = req.body;
 
@@ -325,7 +416,7 @@ app.post('/api/my-startup', async (req, res) => {
 });
 
 //   (PATCH) NOW
-app.patch('/api/my-startup/:id', async (req, res) => {
+app.patch('/api/my-startup/:id',verifyToken, async (req, res) => {
   try {
     const { id } = req.params;
     const updates = req.body;
@@ -351,7 +442,7 @@ app.patch('/api/my-startup/:id', async (req, res) => {
 });
 
 //   (DELETE)
-app.delete('/api/my-startup/:id', async (req, res) => {
+app.delete('/api/my-startup/:id',verifyToken, async (req, res) => {
   try {
     const { id } = req.params;
     const result = await startupsCollection.deleteOne({ _id: new ObjectId(id) });
@@ -373,7 +464,7 @@ app.delete('/api/my-startup/:id', async (req, res) => {
 
 //  APPLICATIONS MANAGEMENT 
 
-app.post('/api/applications', async (req, res) => {
+app.post('/api/applications', verifyToken, async (req, res) => {
   try {
     const applicationData = req.body;
     if (applicationData.applicant_email === applicationData.founder_email) {
