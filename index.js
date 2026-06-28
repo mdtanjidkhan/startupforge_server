@@ -899,12 +899,10 @@ app.get('/api/admin/transactions', async (req, res) => {
   }
 });
 
-
-// google login
-
 app.patch('/api/user/update-role', async (req, res) => {
   try {
     const { email, role } = req.body;
+    
     if (!email || !role) {
       return res.status(400).json({ success: false, message: "Email and Role are required" });
     }
@@ -912,23 +910,32 @@ app.patch('/api/user/update-role', async (req, res) => {
     if (role !== "founder" && role !== "collaborator") {
       return res.status(400).json({ success: false, message: "Invalid role selected" });
     }
+
+
     const result = await database.collection("user").updateOne(
-      { email: email }, 
+      { email: { $regex: `^${email}$`, $options: "i" } }, 
       { $set: { role: role } } 
     );
 
-    if (result.modifiedCount > 0) {
-      res.json({ success: true, message: `Role updated to ${role} successfully! ` });
+    if (result.matchedCount > 0) {
+      return res.json({ 
+        success: true, 
+        message: `Role setup verified as ${role}!` 
+      });
     } else {
-      res.status(404).json({ success: false, message: "User not found or role already set" });
+      return res.status(404).json({ 
+        success: false, 
+        message: "User account not found in database. Please sign up first." 
+      });
     }
 
   } catch (error) {
     console.error("Error updating user role:", error);
-    res.status(500).json({ success: false, message: "Internal server error" });
+    return res.status(500).json({ success: false, message: "Internal server error" });
   }
 });
-// home page jonno
+
+
 
 app.get('/api/home/featured-startups', async (req, res) => {
   try {
