@@ -57,7 +57,8 @@ const verifyToken = async (req, res, next) => {
 async function run() {
   try {
     
-    await client.connect();
+    // await client.connect();
+
      const database = client.db("StartupForge");
      const opportunitiesCollection = database.collection("opportunities");
      const startupsCollection = database.collection("startups");
@@ -128,8 +129,8 @@ app.post('/api/create-checkout-session', verifyToken, async (req, res) => {
       ],
       mode: 'payment',
       customer_email: email,
-      success_url: `http://localhost:3000/dashboard/overview/my-startup/add-opportunity?payment_success=true`,
-      cancel_url: `http://localhost:3000/dashboard/overview/my-startup/add-opportunity?payment_cancel=true`,
+      success_url: `${process.env.CLIENT_URL}/dashboard/overview/my-startup/add-opportunity?payment_success=true`,
+      cancel_url: `${process.env.CLIENT_URL}/dashboard/overview/my-startup/add-opportunity?payment_cancel=true`,
     });
 
     res.json({ url: session.url });
@@ -916,7 +917,7 @@ app.patch('/api/user/update-role', async (req, res) => {
     );
 
     if (result.modifiedCount > 0) {
-      res.json({ success: true, message: `Role updated to ${role} successfully! 🎉` });
+      res.json({ success: true, message: `Role updated to ${role} successfully! ` });
     } else {
       res.status(404).json({ success: false, message: "User not found or role already set" });
     }
@@ -926,7 +927,7 @@ app.patch('/api/user/update-role', async (req, res) => {
     res.status(500).json({ success: false, message: "Internal server error" });
   }
 });
-// home page 
+// home page jonno
 
 app.get('/api/home/featured-startups', async (req, res) => {
   try {
@@ -1012,7 +1013,7 @@ app.get('/api/startups', async (req, res) => {
 
 
 
-    await client.db("admin").command({ ping: 1 });
+    // await client.db("admin").command({ ping: 1 });
     console.log("Pinged your deployment. You successfully connected to MongoDB!");
   } finally {
     // Ensures that the client will close when you finish/error
